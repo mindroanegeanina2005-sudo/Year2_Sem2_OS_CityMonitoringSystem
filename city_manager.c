@@ -18,9 +18,32 @@ typedef struct Report{
 }Report;
 
 
+///NTOE TO ADD: only managers can create distrincts??
+
+/// --------------
+/// HELPERS
+/// --------------
+void get_permissions_string(mode_t mode, char *str) {
+    // Owner
+    str[0] = (mode & S_IRUSR) ? 'r' : '-';
+    str[1] = (mode & S_IWUSR) ? 'w' : '-';
+    str[2] = (mode & S_IXUSR) ? 'x' : '-';
+    // Group
+    str[3] = (mode & S_IRGRP) ? 'r' : '-';
+    str[4] = (mode & S_IWGRP) ? 'w' : '-';
+    str[5] = (mode & S_IXGRP) ? 'x' : '-';
+    // Others
+    str[6] = (mode & S_IROTH) ? 'r' : '-';
+    str[7] = (mode & S_IWOTH) ? 'w' : '-';
+    str[8] = (mode & S_IXOTH) ? 'x' : '-';
+    
+    str[9] = '\0';
+}
 
 
-
+/// --------------
+/// ADDING REPORTS 
+/// --------------
 int get_last_report_id(int fd){
     Report temp;
     int lastID = 0;
@@ -35,13 +58,14 @@ int get_last_report_id(int fd){
     return lastID;
 }
 
+
 // both manager and inspector can use
-void add(char *district_id, char *inspector_name){
+void add(char *district_id, char *name, char *role){
 
     struct stat st;
     char path[256];
+    char txt[256];
 
-  
     // Checks if dir/district exists
     if (stat(district_id, &st) == 0) {
 
@@ -51,7 +75,7 @@ void add(char *district_id, char *inspector_name){
             return;
         }
 
-        //if dir exists we continue with that one, ig not we create one
+        // If dir exists we continue with that one, ig not we create one
     }
     else {
         if (mkdir(district_id, 0750) == -1) {
@@ -68,9 +92,6 @@ void add(char *district_id, char *inspector_name){
         perror("[ERROR] reports.dat creation failed");
         return;
     }
-    
-    
-
     chmod(path, 0664);
 
     // Check permissions
@@ -81,12 +102,11 @@ void add(char *district_id, char *inspector_name){
         }
     }
 
-
     Report r;
     int lastID = get_last_report_id(fd); 
     r.reportID = lastID + 1;
 
-    strcpy(r.inspector_name, inspector_name);
+    strcpy(r.inspector_name, name);
     r.timestamp = time(NULL);
 
     printf("Enter latitude: ");
@@ -117,16 +137,44 @@ void add(char *district_id, char *inspector_name){
 
     close(fd);
     printf("[INFO] Report added successfully with ID %d\n", r.reportID);
-    
+
+    ///LOGGED TEXT FILE
+    snprintf(txt, sizeof(path), "%s/logged_district", district_id);
+    int ft = open(txt, O_CREAT | O_WRONLY | O_APPEND, 0644);
+    if (ft == -1) {
+        perror("[ERROR] logged_district creation failed");
+        return;
+    }
+    chmod(txt, 0644);
+
+    // Check permissions
+    if (stat(txt, &st) == 0) {
+        if ((st.st_mode & 0666) != 0644) {
+            printf("[ERROR] logged_district has invalid permissions\n");
+            return;
+        }
+    }
+    char log[256];
+  
+    int log_len=snprintf(log, sizeof(log), "[%s%s %s add\n", ctime(&r.timestamp), name, role);
+
+    if (write(ft, log, log_len) != log_len) {
+        perror("[ERROR] write failed on logs");
+        close(ft);
+        return;
+    }
+
+    close(ft);
+
+
+
 }
 
+/// --------------
+/// LISTING
+/// --------------
 
-
-
-\
-
-void list(char *district_id)
-{
+void list(char *district_id, char *name, char *role){
     struct stat st;
     char path[256];
 
@@ -139,28 +187,13 @@ void list(char *district_id)
 
     // Perimssions
     char perm[10];
-
-    perm[0] = (st.st_mode & S_IRUSR) ? 'r' : '-';
-    perm[1] = (st.st_mode & S_IWUSR) ? 'w' : '-';
-    perm[2] = (st.st_mode & S_IXUSR) ? 'x' : '-';
-
-    perm[3] = (st.st_mode & S_IRGRP) ? 'r' : '-';
-    perm[4] = (st.st_mode & S_IWGRP) ? 'w' : '-';
-    perm[5] = (st.st_mode & S_IXGRP) ? 'x' : '-';
-
-    perm[6] = (st.st_mode & S_IROTH) ? 'r' : '-';
-    perm[7] = (st.st_mode & S_IWOTH) ? 'w' : '-';
-    perm[8] = (st.st_mode & S_IXOTH) ? 'x' : '-';
-
-    perm[9] = '\0';
-
-
+    get_permissions_string(st.st_mode, perm);
 
     printf("\n=== reports.dat INFO ===\n");
-    printf("Permissions : %s\n", perm);
-    printf("Size        : %ld bytes\n", st.st_size);
-    printf("Last modified: %s", ctime(&st.st_mtime));
-
+    printf("Permissions  : %s\n", perm);
+    printf("Size         : %ld bytes\n", st.st_size);
+    printf("Last modified: %s", ctime(&st.st_mtime)); //takes time from stat
+  
     // Open read
     int fd = open(path, O_RDONLY);
     if (fd == -1) {
@@ -169,21 +202,43 @@ void list(char *district_id)
     }
 
     Report r;
-
+    
     printf("\n=== REPORTS ===\n");
 
+    // Writing a report
     while (read(fd, &r, sizeof(Report)) == sizeof(Report)) {
         printf("\n");
-        printf("ID: %d\n", r.reportID);
-        printf("Inspector: %s\n", r.inspector_name);
-        printf("Lat: %.6f | Long: %.6f\n", r.GPS_lat, r.GPS_long);
-        printf("Issue: %s\n", r.issue);
-        printf("Severity: %d\n", r.severity);
-        printf("Time: %s", ctime(&r.timestamp));
-        printf("Desc: %s\n", r.desc);
+        printf("ID              : %d\n", r.reportID);
+        printf("Inspector       : %s\n", r.inspector_name);
+        printf("Lat: %.3f     |Long: %.3f\n", r.GPS_lat, r.GPS_long);
+        printf("Issue           : %s\n", r.issue);
+        printf("Severity        : %d\n", r.severity);
+        printf("Time            : %s", ctime(&r.timestamp));
+        printf("Desc            : %s\n", r.desc);
     }
 
     close(fd);
+
+    //WRITING LOG
+    char txt[256];
+    snprintf(txt, sizeof(txt), "%s/logged_district", district_id);
+    int ft = open(txt, O_WRONLY | O_APPEND);
+    if (ft == -1) {
+        perror("[ERROR] logged_district adding log failed");
+        return;
+    }
+    char log[256];
+  
+    int log_len=snprintf(log, sizeof(log), "[%s%s %s list\n", ctime(time(NULL)), name, role);
+
+    if (write(ft, log, log_len) != log_len) {
+        perror("[ERROR] write failed on logs");
+        close(ft);
+        return;
+    }
+
+    close(ft);
+
 }
 
 int main(int argc, char* argv[]){
@@ -199,12 +254,12 @@ int main(int argc, char* argv[]){
         args[arg_count++] = argv[i];
     }
 
-    //I think I can do it with an aux funtion + case but for now it works.
+    // I think I can do it with an aux funtion + case but for now it works.
     if (strcmp(command, "--add") == 0) {
-        add(args[0],user);
+        add(args[0], user, role);
     }
     else if (strcmp(command, "--list") == 0) {
-        list(args[0]);
+        list(args[0], user, role);
     }
     else if (strcmp(command, "--view") == 0) {
         printf("Remove report command\n");
