@@ -59,12 +59,12 @@ int get_last_report_id(int fd){
 }
 
 
-// both manager and inspector can use
+// both manager and inspector can use add
 void add(char *district_id, char *name, char *role){
 
     struct stat st;
-    char path[256];
-    char txt[256];
+    char path[256]; //for report path
+    char txt[256]; //for logged path
 
     // Checks if dir/district exists
     if (stat(district_id, &st) == 0) {
@@ -78,10 +78,19 @@ void add(char *district_id, char *name, char *role){
         // If dir exists we continue with that one, ig not we create one
     }
     else {
-        if (mkdir(district_id, 0750) == -1) {
-            perror("[ERROR] mkdir failed");
+        // Dir does not exists -> create
+        if (strcmp(role, "manager") == 0) {
+            // creates dir
+            if (mkdir(district_id, 0750) == -1) {
+                perror("[ERROR] mkdir failed");
+                return;
+            }
+            chmod(district_id, 0750);
+        }else{
+            printf("[ERROR] Only managers can create new districts.\n");
             return;
         }
+
     }
 
     /// REPORT
@@ -156,7 +165,8 @@ void add(char *district_id, char *name, char *role){
     }
     char log[256];
   
-    int log_len=snprintf(log, sizeof(log), "[%s%s %s add\n", ctime(&r.timestamp), name, role);
+
+    int log_len=snprintf(log, sizeof(log), "-> %s%s %s add\n", ctime(&r.timestamp), name, role);
 
     if (write(ft, log, log_len) != log_len) {
         perror("[ERROR] write failed on logs");
@@ -228,8 +238,9 @@ void list(char *district_id, char *name, char *role){
         return;
     }
     char log[256];
-  
-    int log_len=snprintf(log, sizeof(log), "[%s%s %s list\n", ctime(time(NULL)), name, role);
+    time_t timestamp = time(NULL);
+
+    int log_len=snprintf(log, sizeof(log), "-> %s%s %s list\n", ctime(&timestamp), name, role);
 
     if (write(ft, log, log_len) != log_len) {
         perror("[ERROR] write failed on logs");
@@ -242,6 +253,18 @@ void list(char *district_id, char *name, char *role){
 }
 
 int main(int argc, char* argv[]){
+
+    if (argc < 6) {
+        fprintf(stderr, "Error: Missing required arguments.\n");
+        return 1;
+    }
+
+    // forse the fhe command order.
+    if (strcmp(argv[1], "--role") != 0 || strcmp(argv[3], "--user") != 0) {
+        fprintf(stderr, "Usage: %s --role [role] --user [user] --[command] [args...]\n", argv[0]);
+        return 1;
+    }
+
 
     char* role=argv[2]; //manager or inspector
     char* user=argv[4]; //name
