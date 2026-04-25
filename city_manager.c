@@ -65,12 +65,13 @@ void add(char *district_id, char *name, char *role){
     struct stat st;
     char path[256]; //for report path
     char txt[256]; //for logged path
+    char conf[256]; //for configuration path
 
     // Checks if dir/district exists
     if (stat(district_id, &st) == 0) {
 
         // Check dir permissions
-        if ((st.st_mode & 0777) != 0750) {
+        if ((st.st_mode & 0777) != (S_IRWXU | S_IRGRP | S_IXGRP)){
             printf("[ERROR] Invalid permissions on district directory\n");
             return;
         }
@@ -94,6 +95,7 @@ void add(char *district_id, char *name, char *role){
     }
 
     /// REPORT
+     //------------------
     snprintf(path, sizeof(path), "%s/reports.dat", district_id);
 
     int fd = open(path, O_CREAT | O_RDWR, 0664);
@@ -105,8 +107,9 @@ void add(char *district_id, char *name, char *role){
 
     // Check permissions
     if (stat(path, &st) == 0) {
-        if ((st.st_mode & 0666) != 0664) {
+        if ((st.st_mode & 0777) != (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH)) {
             printf("[ERROR] reports.dat has invalid permissions\n");
+            close(fd);
             return;
         }
     }
@@ -145,38 +148,51 @@ void add(char *district_id, char *name, char *role){
     }
 
     close(fd);
-    printf("[INFO] Report added successfully with ID %d\n", r.reportID);
 
     ///LOGGED TEXT FILE
-    snprintf(txt, sizeof(path), "%s/logged_district", district_id);
+    //------------------
+    snprintf(txt, sizeof(txt), "%s/logged_district", district_id);
     int ft = open(txt, O_CREAT | O_WRONLY | O_APPEND, 0644);
-    if (ft == -1) {
-        perror("[ERROR] logged_district creation failed");
-        return;
+    if (ft != -1) {
+        chmod(txt, 0644); 
+        
+        if (fstat(ft, &st) == 0 && (st.st_mode & 0777) == (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) {
+           
+            char log[256];
+            char *time_str = ctime(&r.timestamp);
+            time_str[24] = '\0';
+
+            int log_len = snprintf(log, sizeof(log), "-> %s %s %s add\n", time_str, name, role);
+            write(ft, log, log_len);
+        }
+        close(ft);
     }
-    chmod(txt, 0644);
+    /// CONFIGURATION 
+    //------------------
+    snprintf(conf, sizeof(conf), "%s/district.cfg", district_id);
+
+    int fco = open(conf, O_CREAT | O_RDWR | O_EXCL, 0640);
+    // Checks if file is new or not
+    if (fco == -1) {
+
+        close(fco);
+    }else {
+        chmod(conf, 0640);
+        
+        char *threshold = "3\n";
+        if (write(fco, threshold, strlen(threshold)) == -1) {
+            perror("[ERROR] Failed to write default threshold");
+        }
+        close(fco);
+    }   
 
     // Check permissions
-    if (stat(txt, &st) == 0) {
-        if ((st.st_mode & 0666) != 0644) {
-            printf("[ERROR] logged_district has invalid permissions\n");
+    if (stat(conf, &st) == 0) {
+        if ((st.st_mode & 0777) != (S_IRUSR | S_IWUSR | S_IRGRP)) {
+            printf("[ERROR] district.cfg has invalid permissions\n");
             return;
         }
     }
-    char log[256];
-  
-
-    int log_len=snprintf(log, sizeof(log), "-> %s%s %s add\n", ctime(&r.timestamp), name, role);
-
-    if (write(ft, log, log_len) != log_len) {
-        perror("[ERROR] write failed on logs");
-        close(ft);
-        return;
-    }
-
-    close(ft);
-
-
 
 }
 
@@ -239,8 +255,10 @@ void list(char *district_id, char *name, char *role){
     }
     char log[256];
     time_t timestamp = time(NULL);
+    char *time_str = ctime(&timestamp);
+    time_str[24] = '\0';
 
-    int log_len=snprintf(log, sizeof(log), "-> %s%s %s list\n", ctime(&timestamp), name, role);
+    int log_len=snprintf(log, sizeof(log), "-> %s %s %s list\n", time_str, name, role);
 
     if (write(ft, log, log_len) != log_len) {
         perror("[ERROR] write failed on logs");
