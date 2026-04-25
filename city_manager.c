@@ -40,7 +40,64 @@ void get_permissions_string(mode_t mode, char *str) {
     str[9] = '\0';
 }
 
+// Writing a report.
+void print_report_details(Report *r) {
+    printf("\nID              : %d\n", r->reportID);
+    printf("Inspector       : %s\n", r->inspector_name);
+    printf("Lat: %.3f     |Long: %.3f\n", r->GPS_lat, r->GPS_long);
+    printf("Issue           : %s\n", r->issue);
+    printf("Severity        : %d\n", r->severity);
+    printf("Time            : %s", ctime(&r->timestamp));
+    printf("Desc            : %s\n", r->desc);
+    printf("-------------------------------\n");
+}
 
+// Writing a log -> since i have to use it for all actions
+void write_log(char *district_id,char *name, char *role, char *text){
+    char txt[256];
+    struct stat st;
+    snprintf(txt, sizeof(txt), "%s/logged_district", district_id);
+
+
+    int ft = open(txt, O_WRONLY | O_APPEND);
+    if (ft == -1) {
+        perror("[ERROR] open log failed");
+        return;
+    }
+
+    if (stat(txt, &st) == -1) {
+        perror("[ERROR] stat failed");
+        close(ft);
+        return;
+    }
+
+    //as I undertsand only managers can write logs. 
+    if (strcmp(role, "manager") == 0) {
+        //if write or execute, owner
+         if (!(st.st_mode & S_IRUSR) || !(st.st_mode & S_IWUSR)) {
+            printf("[ERROR] Manager cannot read/write logs\n");
+            close(ft);
+            return;
+        }
+    } else {
+        if (!(st.st_mode & S_IRGRP)) {
+            printf("[ERROR] Inspector cannot read logs\n");
+            close(ft);
+            return;
+        }
+    }
+
+    time_t t = time(NULL);
+    char *time_str = ctime(&t);
+    time_str[24] = '\0';
+
+    char log[256];
+    int len = snprintf(log, sizeof(log), "%s %s %s %s\n",
+                                    time_str, name, role, text);
+
+    write(ft, log, len);
+    close(ft);
+}
 /// --------------
 /// ADDING REPORTS 
 /// --------------
@@ -58,7 +115,6 @@ int get_last_report_id(int fd){
     return lastID;
 }
 
-
 // both manager and inspector can use add
 void add(char *district_id, char *name, char *role){
 
@@ -71,27 +127,33 @@ void add(char *district_id, char *name, char *role){
     if (stat(district_id, &st) == 0) {
 
         // Check dir permissions
-        if ((st.st_mode & 0777) != (S_IRWXU | S_IRGRP | S_IXGRP)){
-            printf("[ERROR] Invalid permissions on district directory\n");
-            return;
+        if (strcmp(role, "manager") == 0) {
+            //if write or execute, owner
+            if (!(st.st_mode & S_IRUSR) || !(st.st_mode & S_IWUSR) || !(st.st_mode & S_IXUSR)) {
+                printf("[ERROR] Manager cannot use district directory\n");
+                return;
+            }
+        } else {
+            if (!(st.st_mode & S_IRGRP) || !(st.st_mode & S_IXGRP)) {
+                printf("[ERROR] Inspector cannot use district directory\n");
+                return;
+            }
         }
-
         // If dir exists we continue with that one, ig not we create one
     }
     else {
         // Dir does not exists -> create
-        if (strcmp(role, "manager") == 0) {
-            // creates dir
-            if (mkdir(district_id, 0750) == -1) {
-                perror("[ERROR] mkdir failed");
-                return;
-            }
-            chmod(district_id, 0750);
-        }else{
+        if (strcmp(role, "manager") != 0) {
             printf("[ERROR] Only managers can create new districts.\n");
             return;
         }
-
+        // creates dir
+        if (mkdir(district_id, 0750) == -1) {
+            perror("[ERROR] mkdir failed");
+            return;
+        }
+        chmod(district_id, 0750);
+       
     }
 
     /// REPORT
@@ -106,13 +168,22 @@ void add(char *district_id, char *name, char *role){
     chmod(path, 0664);
 
     // Check permissions
+    // Checks only write.
     if (stat(path, &st) == 0) {
-        if ((st.st_mode & 0777) != (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH)) {
-            printf("[ERROR] reports.dat has invalid permissions\n");
+    if (strcmp(role, "manager") == 0) {
+        if (!(st.st_mode & S_IWUSR)) {
+            printf("[ERROR] Manager cannot write reports.dat\n");
+            close(fd);
+            return;
+        }
+    } else {
+        if (!(st.st_mode & S_IWGRP)) {
+            printf("[ERROR] Inspector cannot write reports.dat\n");
             close(fd);
             return;
         }
     }
+}
 
     Report r;
     int lastID = get_last_report_id(fd); 
@@ -153,20 +224,17 @@ void add(char *district_id, char *name, char *role){
     //------------------
     snprintf(txt, sizeof(txt), "%s/logged_district", district_id);
     int ft = open(txt, O_CREAT | O_WRONLY | O_APPEND, 0644);
-    if (ft != -1) {
-        chmod(txt, 0644); 
-        
-        if (fstat(ft, &st) == 0 && (st.st_mode & 0777) == (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) {
-           
-            char log[256];
-            char *time_str = ctime(&r.timestamp);
-            time_str[24] = '\0';
-
-            int log_len = snprintf(log, sizeof(log), "-> %s %s %s add\n", time_str, name, role);
-            write(ft, log, log_len);
-        }
-        close(ft);
+    if (ft == -1) {
+        perror("[ERROR] log file creation failed");
+        return;
     }
+    close(ft);
+
+    chmod(txt, 0644);
+
+    // used funtion to write the report
+    write_log(district_id, name, role, "add");
+
     /// CONFIGURATION 
     //------------------
     snprintf(conf, sizeof(conf), "%s/district.cfg", district_id);
@@ -188,16 +256,23 @@ void add(char *district_id, char *name, char *role){
 
     // Check permissions
     if (stat(conf, &st) == 0) {
-        if ((st.st_mode & 0777) != (S_IRUSR | S_IWUSR | S_IRGRP)) {
-            printf("[ERROR] district.cfg has invalid permissions\n");
-            return;
+        if (strcmp(role, "manager") == 0) {
+            if (!(st.st_mode & S_IRUSR) || !(st.st_mode & S_IWUSR)) {
+                printf("[ERROR] Manager cannot read and write district.cfg\n");
+                return;
+            }
+        } else {
+            if (!(st.st_mode & S_IRGRP)) {
+                printf("[ERROR] Inspector cannot read district.cfg\n");
+                return;
+            }
         }
     }
 
 }
 
 /// --------------
-/// LISTING
+/// LISTING + VIEW
 /// --------------
 
 void list(char *district_id, char *name, char *role){
@@ -206,12 +281,18 @@ void list(char *district_id, char *name, char *role){
 
     snprintf(path, sizeof(path), "%s/reports.dat", district_id);
 
+    // Check if file exists
     if (stat(path, &st) == -1) {
-        perror("[ERROR] stat failed");
+        perror("[ERROR] reports.dat does not exist");
+        return;
+    }
+    // Check permissions
+    if ((st.st_mode & 0777) != (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH)) {
+        perror("[ERROR] reports.dat has invalid permissions");
         return;
     }
 
-    // Perimssions
+    // get info
     char perm[10];
     get_permissions_string(st.st_mode, perm);
 
@@ -233,42 +314,65 @@ void list(char *district_id, char *name, char *role){
 
     // Writing a report
     while (read(fd, &r, sizeof(Report)) == sizeof(Report)) {
-        printf("\n");
-        printf("ID              : %d\n", r.reportID);
-        printf("Inspector       : %s\n", r.inspector_name);
-        printf("Lat: %.3f     |Long: %.3f\n", r.GPS_lat, r.GPS_long);
-        printf("Issue           : %s\n", r.issue);
-        printf("Severity        : %d\n", r.severity);
-        printf("Time            : %s", ctime(&r.timestamp));
-        printf("Desc            : %s\n", r.desc);
+        print_report_details(&r); // this just prints a report
     }
 
     close(fd);
 
     //WRITING LOG
-    char txt[256];
-    snprintf(txt, sizeof(txt), "%s/logged_district", district_id);
-    int ft = open(txt, O_WRONLY | O_APPEND);
-    if (ft == -1) {
-        perror("[ERROR] logged_district adding log failed");
-        return;
-    }
-    char log[256];
-    time_t timestamp = time(NULL);
-    char *time_str = ctime(&timestamp);
-    time_str[24] = '\0';
-
-    int log_len=snprintf(log, sizeof(log), "-> %s %s %s list\n", time_str, name, role);
-
-    if (write(ft, log, log_len) != log_len) {
-        perror("[ERROR] write failed on logs");
-        close(ft);
-        return;
-    }
-
-    close(ft);
+    write_log(district_id, name, role, "list");
 
 }
+
+void view(char *district_id, char* name, char *role, char* report_id_char){
+    struct stat st;
+    char path[256];
+
+    snprintf(path, sizeof(path), "%s/reports.dat", district_id);
+
+    // Check if file exists
+    if (stat(path, &st) == -1) {
+        perror("[ERROR] reports.dat does not exist");
+        return;
+    }
+    // Check permissions
+    if ((st.st_mode & 0777) != (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH)) {
+        perror("[ERROR] reports.dat has invalid permissions");
+        return;
+    }
+
+
+    int fd = open(path, O_RDONLY);
+    if (fd == -1) {
+        perror("[ERROR] cannot open reports.dat");
+        return;
+    }
+
+    Report r;
+
+    int report_id=atoi(report_id_char);
+    int offset = (report_id-1) * sizeof(Report);
+
+    // Jump to possition
+    if (lseek(fd, offset, SEEK_SET) == -1) {
+        perror("[ERROR] Seek failed");
+        close(fd);
+        return;
+    }
+    if (read(fd, &r, sizeof(Report)) == sizeof(Report)){
+        printf("\n=== Report View %d ===\n",report_id);
+        print_report_details(&r);
+    }else{
+        printf("Did not find report at possition\n");
+    }
+
+    close(fd);
+
+    //WRITING LOG
+    write_log(district_id, name, role, "view");
+
+}
+
 
 int main(int argc, char* argv[]){
 
@@ -282,7 +386,6 @@ int main(int argc, char* argv[]){
         fprintf(stderr, "Usage: %s --role [role] --user [user] --[command] [args...]\n", argv[0]);
         return 1;
     }
-
 
     char* role=argv[2]; //manager or inspector
     char* user=argv[4]; //name
@@ -303,7 +406,7 @@ int main(int argc, char* argv[]){
         list(args[0], user, role);
     }
     else if (strcmp(command, "--view") == 0) {
-        printf("Remove report command\n");
+        view(args[0],user,role,args[1]);
     }
     else if (strcmp(command, "--remove_report") == 0) {
         printf("Remove report command\n");
