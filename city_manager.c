@@ -17,9 +17,6 @@ typedef struct Report{
     char desc[200];
 }Report;
 
-
-///NTOE TO ADD: only managers can create distrincts??
-
 /// --------------
 /// HELPERS
 /// --------------
@@ -71,7 +68,7 @@ void write_log(char *district_id,char *name, char *role, char *text){
         return;
     }
 
-    //as I undertsand only managers can write logs. 
+    // Check permissions
     if (strcmp(role, "manager") == 0) {
         //if write or execute, owner
          if (!(st.st_mode & S_IRUSR) || !(st.st_mode & S_IWUSR)) {
@@ -80,6 +77,8 @@ void write_log(char *district_id,char *name, char *role, char *text){
             return;
         }
     } else {
+        // close(ft);
+        // return;
         if (!(st.st_mode & S_IRGRP)) {
             printf("[ERROR] Inspector cannot read logs\n");
             close(ft);
@@ -373,6 +372,143 @@ void view(char *district_id, char* name, char *role, char* report_id_char){
 
 }
 
+/// --------------
+/// Update Threshold
+/// --------------
+
+void update_threshold(char *district_id, char *name, char *role, char* value_char){
+    struct stat st;
+    char path[256];
+
+    snprintf(path, sizeof(path), "%s/district.cfg", district_id);
+
+    if (strcmp(role, "manager") != 0) {
+        printf("Manager role required to update thresholds.\n");
+        return;
+    }
+
+    if (stat(path, &st) == -1) {
+        perror("Error accessing district.cfg");
+        return;
+    }
+    if (!(st.st_mode & S_IRUSR) || !(st.st_mode & S_IWUSR)) {
+        printf("[ERROR] Manager does not have read/write access to district.cfg\n");
+        return;
+    }
+
+    int fd = open(path, O_WRONLY | O_TRUNC);
+    if (fd == -1) {
+        perror("[ERROR] Cannot open district.cfg");
+        return;
+    }
+
+    char buffer[64];
+    int threshold = atoi(value_char);
+    snprintf(buffer, sizeof(buffer), "%d\n", threshold);
+
+    if (write(fd, buffer, strlen(buffer)) == -1) {
+        perror("[ERROR] Failed to write threshold");
+        close(fd);
+        return;
+    }
+
+    close(fd);
+
+    write_log(district_id, name, role, "update threshold");
+
+}
+
+/// --------------
+/// REMOVE REPORTS
+/// --------------
+
+void remove_report(char *district_id, char* name, char *role, char* report_id_char){
+    struct stat st;
+    char path[256];
+
+    snprintf(path, sizeof(path), "%s/reports.dat", district_id);
+
+    if (strcmp(role, "manager") != 0) {
+        printf("Manager role required to update thresholds.\n");
+        return;
+    }
+
+    if (stat(path, &st) == -1) {
+        perror("[ERROR] stat failed");
+        return;
+    }
+
+    if (!(st.st_mode & S_IRUSR) || !(st.st_mode & S_IWUSR)) {
+        printf("[ERROR]Manager does not have read/write permissions on");
+        return;
+    }
+
+    // after checking perimssions and such we open the file
+    int fd = open(path, O_RDWR);
+    if (fd == -1) {
+        perror("[ERROR] Failed to open reports.dat");
+        return;
+    }
+
+    int report_id = atoi(report_id_char);
+    int total_records = st.st_size / sizeof(Report);
+
+    //early check if the record exists
+    if (report_id <= 0 || report_id > total_records) {
+        printf("[INFO] Invalid report ID\n");
+        close(fd);
+        return;
+    }
+
+    // Jump
+    int offset = (report_id - 1) * sizeof(Report);
+    if (lseek(fd, offset, SEEK_SET) == -1) {
+        perror("[ERROR] seek failed");
+        close(fd);
+        return;
+    }
+
+
+    // Shift
+    for (int i = report_id - 1; i < total_records - 1; i++) {
+
+        Report next;
+
+        if (lseek(fd, (i + 1) * sizeof(Report), SEEK_SET) == -1) {
+            perror("[ERROR] seek failed");
+            close(fd);
+            return;
+        }
+
+        if (read(fd, &next, sizeof(Report)) != sizeof(Report)) {
+            perror("[ERROR] read failed");
+            close(fd);
+            return;
+        }
+
+        //fix ID for the new position
+        next.reportID = i + 1;
+
+        if (lseek(fd, i * sizeof(Report), SEEK_SET) == -1) {
+            perror("[ERROR] seek failed");
+            close(fd);
+            return;
+        }
+
+        if (write(fd, &next, sizeof(Report)) != sizeof(Report)) {
+            perror("[ERROR] write failed");
+            close(fd);
+            return;
+        }
+    }
+
+
+    if (ftruncate(fd, (total_records - 1) * sizeof(Report)) == -1) {
+        perror("[ERROR] ftruncate failed");
+    }
+
+    close(fd);
+}
 
 int main(int argc, char* argv[]){
 
@@ -383,7 +519,7 @@ int main(int argc, char* argv[]){
 
     // forse the fhe command order.
     if (strcmp(argv[1], "--role") != 0 || strcmp(argv[3], "--user") != 0) {
-        fprintf(stderr, "Usage: %s --role [role] --user [user] --[command] [args...]\n", argv[0]);
+        fprintf(stderr, "Usage: %s --role [role] --user [user] --[command] ...\n", argv[0]);
         return 1;
     }
 
@@ -409,10 +545,10 @@ int main(int argc, char* argv[]){
         view(args[0],user,role,args[1]);
     }
     else if (strcmp(command, "--remove_report") == 0) {
-        printf("Remove report command\n");
+        remove_report(args[0],user,role,args[1]);
     }
     else if (strcmp(command, "--update_threshold") == 0) {
-        printf("Remove report command\n");
+        update_threshold(args[0],user,role,args[1]);
     }
     else if (strcmp(command, "--filter") == 0) {
         printf("Filter command\n");
