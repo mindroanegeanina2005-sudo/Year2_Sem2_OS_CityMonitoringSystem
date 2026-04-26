@@ -1,5 +1,6 @@
 #include <time.h>
-
+#include <sys/types.h>
+#include <dirent.h> //for checking symlinks in the root dir
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -77,13 +78,16 @@ void write_log(char *district_id,char *name, char *role, char *text){
             return;
         }
     } else {
-        // close(ft);
-        // return;
-        if (!(st.st_mode & S_IRGRP)) {
-            printf("[ERROR] Inspector cannot read logs\n");
-            close(ft);
-            return;
-        }
+        // inspectors can't write on logs??
+        close(ft);
+        return;
+
+        ///UNCOMMENT THIS if we want the inspector logs to also write [and comment the close + return above]
+        // if (!(st.st_mode & S_IRGRP)) {
+        //     printf("[ERROR] Inspector cannot read logs\n");
+        //     close(ft);
+        //     return;
+        // }
     }
 
     time_t t = time(NULL);
@@ -121,6 +125,7 @@ void add(char *district_id, char *name, char *role){
     char path[256]; //for report path
     char txt[256]; //for logged path
     char conf[256]; //for configuration path
+    char link_name[256]; //for report SYM link 
 
     // Checks if dir/district exists
     if (stat(district_id, &st) == 0) {
@@ -169,20 +174,20 @@ void add(char *district_id, char *name, char *role){
     // Check permissions
     // Checks only write.
     if (stat(path, &st) == 0) {
-    if (strcmp(role, "manager") == 0) {
-        if (!(st.st_mode & S_IWUSR)) {
-            printf("[ERROR] Manager cannot write reports.dat\n");
-            close(fd);
-            return;
-        }
-    } else {
-        if (!(st.st_mode & S_IWGRP)) {
-            printf("[ERROR] Inspector cannot write reports.dat\n");
-            close(fd);
-            return;
+        if (strcmp(role, "manager") == 0) {
+            if (!(st.st_mode & S_IWUSR)) {
+                printf("[ERROR] Manager cannot write reports.dat\n");
+                close(fd);
+                return;
+            }
+        } else {
+            if (!(st.st_mode & S_IWGRP)) {
+                printf("[ERROR] Inspector cannot write reports.dat\n");
+                close(fd);
+                return;
+            }
         }
     }
-}
 
     Report r;
     int lastID = get_last_report_id(fd); 
@@ -218,6 +223,18 @@ void add(char *district_id, char *name, char *role){
     }
 
     close(fd);
+
+    /// SYMLINKS
+
+    snprintf(link_name, sizeof(link_name), "active_reports-%s", district_id);
+
+    // Check if link exists
+    if (lstat(link_name, &st) == 0) {
+        unlink(link_name); 
+    }
+    if (symlink(path, link_name) == -1) {
+        perror("[ERROR] Failed to create symbolic link");
+    } 
 
     ///LOGGED TEXT FILE
     //------------------
@@ -267,7 +284,6 @@ void add(char *district_id, char *name, char *role){
             }
         }
     }
-
 }
 
 /// --------------
@@ -468,6 +484,7 @@ void remove_report(char *district_id, char* name, char *role, char* report_id_ch
         return;
     }
 
+printf("GOT HERE\n");
 
     // Shift
     for (int i = report_id - 1; i < total_records - 1; i++) {
@@ -502,7 +519,7 @@ void remove_report(char *district_id, char* name, char *role, char* report_id_ch
         }
     }
 
-
+    // Truncate
     if (ftruncate(fd, (total_records - 1) * sizeof(Report)) == -1) {
         perror("[ERROR] ftruncate failed");
     }
@@ -510,54 +527,260 @@ void remove_report(char *district_id, char* name, char *role, char* report_id_ch
     close(fd);
 }
 
+/// --------------
+/// FILDER - AI
+/// --------------
+
+int parse_condition(char *input_a, char *field, char *op, char *value) {
+    if (!input_a || !field || !op || !value)
+        return -1;
+
+    // we delete the "" then parse the a:op:b 
+    char *start = input_a;
+    int len = strlen(input_a);
+    
+    if (len >= 2 && input_a[0] == '"' && input_a[len - 1] == '"') {
+        start = input_a + 1;      
+        len -= 2;              
+    }
+    char input[100];  
+    
+    if (len >= sizeof(input)) {
+        return -1;
+    }
+    strncpy(input, start, len);
+    input[len] = '\0';
+
+    // Find first colon
+    char *first_colon = strchr(input, ':');
+    if (!first_colon) {
+        return -1;
+    }
+
+    // Extract field before first colon
+    char field_len = first_colon - input;
+    if (field_len == 0){
+        return -1;
+    }
+    strncpy(field, input, field_len);
+    field[field_len] = '\0';
+
+    // Find second colon after the first one
+    const char *second_colon = strchr(first_colon + 1, ':');
+    if (!second_colon){
+        return -1;
+    }
+
+    // Extract operator
+    char op_len = second_colon - (first_colon + 1);
+    if (op_len == 0 || op_len > 2){
+        return -1;
+    }
+    strncpy(op, first_colon + 1, op_len);
+    op[op_len] = '\0';
+
+    // Extract value (after second colon)
+    const char *val_start = second_colon + 1;
+    char val_len = strlen(val_start);
+    if (val_len == 0) {
+        return -1;
+    }
+    strcpy(value, val_start); // value buffer must be large enough
+
+    return 0;
+}
+
+static int compare_numbers(int  a, int  b, const char *op) {
+    if (strcmp(op, "==") == 0) return a == b;
+    if (strcmp(op, "!=") == 0) return a != b;
+    if (strcmp(op, "<") == 0)  return a < b;
+    if (strcmp(op, "<=") == 0) return a <= b;
+    if (strcmp(op, ">") == 0)  return a > b;
+    if (strcmp(op, ">=") == 0) return a >= b;
+    return 0;   // unknown
+}
+
+int match_condition(Report *r, const char *field, const char *op, const char *value) {
+    if (!r || !field || !op || !value)
+        return 0;
+
+    // Severity field (integer)
+    if (strcmp(field, "severity") == 0) {
+        int report_val = r->severity;
+        int cond_val = atoi(value);   // convert value to integer
+        return compare_numbers(report_val, cond_val, op);
+    }
+
+    // Timestamp field (time_t, treated as integer)
+    if (strcmp(field, "timestamp") == 0) {
+        int report_val = (int)r->timestamp;
+        int cond_val = atoi(value);
+        return compare_numbers(report_val, cond_val, op);
+    }
+
+    // Inspector field (string)
+    if (strcmp(field, "inspector") == 0) {
+        if (strcmp(op, "==") == 0) return strcmp(r->inspector_name, value) == 0;
+        if (strcmp(op, "!=") == 0) return strcmp(r->inspector_name, value) != 0;
+        // For other operators (e.g., <, >) on a string, we return 0
+        return 0;
+    }
+
+    if (strcmp(field, "category") == 0) {
+        if (strcmp(op, "==") == 0) return strcmp(r->issue, value) == 0;
+        if (strcmp(op, "!=") == 0) return strcmp(r->issue, value) != 0;
+        // For other operators (e.g., <, >) on a string, we return 0
+        return 0;
+    }
+    return 0;
+}
+
+void filter(char *district_id, char* name, char *role, char** filters){
+    struct stat st;
+    char path[256];
+
+    snprintf(path, sizeof(path), "%s/reports.dat", district_id);
+
+    // Check if file exists
+    if (stat(path, &st) == -1) {
+        perror("[ERROR] reports.dat does not exist");
+        return;
+    }
+    // Check permissions
+    if ((st.st_mode & 0777) != (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH)) {
+        perror("[ERROR] reports.dat has invalid permissions");
+        return;
+    }
+
+    // Open read
+    int fd = open(path, O_RDONLY);
+    if (fd == -1) {
+        perror("[ERROR] cannot open reports.dat");
+        return;
+    }
+
+    Report r;
+    
+    printf("\n=== FILTERED REPORTS ===\n");
+
+    // Writing a report
+    while (read(fd, &r, sizeof(Report)) == sizeof(Report)) {
+        int all_conditions_met = 1;
+
+        if (filters != NULL) {
+            for (int i = 0; filters[i] != NULL; i++) {
+                char field[64], op[8], value[128];
+
+                // Parse the "field:op:value" string
+                if (parse_condition(filters[i], field, op, value) == 0) {
+                    // Test the record against condition
+                    if (!match_condition(&r, field, op, value)) {
+                        all_conditions_met = 0;
+                        break; // fails one, fails all 
+                    }
+                } else {
+                    // Something wrong with parse
+                    all_conditions_met = 0;
+                    break;
+                }
+            }
+        }
+
+        if (all_conditions_met) {
+            print_report_details(&r);
+        }
+    }   
+
+    close(fd);
+
+    //WRITING LOG
+    write_log(district_id, name, role, "filter");
+}
+
+/// --------------
+/// SYMLINKS -> not sure if needed
+/// --------------
+
+void check_links() {
+    struct dirent *entry;
+    struct stat link_stat, target_stat;
+    DIR *dir = opendir("."); // root
+
+    if (dir == NULL) {
+        perror("Unable to read directory");
+        return;
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (strncmp(entry->d_name, "active_reports-", 15) == 0) {
+            
+            if (lstat(entry->d_name, &link_stat) == -1) continue;
+
+            // Check if symbolic link
+            if (S_ISLNK(link_stat.st_mode)) {
+                
+                // stat() follows the link, if it fails the link is dangling.
+                if (stat(entry->d_name, &target_stat) == -1) {
+                    perror("[ERROR] Dangling link detected\n");
+                    unlink(entry->d_name);
+                } 
+            }
+        }
+    }
+    closedir(dir);
+}
+
+
 int main(int argc, char* argv[]){
 
     if (argc < 6) {
-        fprintf(stderr, "Error: Missing required arguments.\n");
+        perror("Error: Missing required arguments.\n");
         return 1;
     }
 
     // forse the fhe command order.
     if (strcmp(argv[1], "--role") != 0 || strcmp(argv[3], "--user") != 0) {
-        fprintf(stderr, "Usage: %s --role [role] --user [user] --[command] ...\n", argv[0]);
+        perror("Usage:--role [role] --user [user] --[command] ...\n");
         return 1;
     }
 
     char* role=argv[2]; //manager or inspector
     char* user=argv[4]; //name
     char* command=argv[5]; //--add or --list etc
+    char* district=argv[6];
 
     char *args[50];
     int arg_count = 0;
 
-    for (int i = 6; i < argc; i++) {
+    for (int i = 7; i < argc; i++) {
         args[arg_count++] = argv[i];
     }
-
+    args[arg_count] = NULL;
     // I think I can do it with an aux funtion + case but for now it works.
     if (strcmp(command, "--add") == 0) {
-        add(args[0], user, role);
+        add(district, user, role);
+        check_links();
     }
     else if (strcmp(command, "--list") == 0) {
-        list(args[0], user, role);
+        list(district, user, role);
     }
     else if (strcmp(command, "--view") == 0) {
-        view(args[0],user,role,args[1]);
+        view(district,user,role,args[0]);
     }
     else if (strcmp(command, "--remove_report") == 0) {
-        remove_report(args[0],user,role,args[1]);
+        remove_report(district,user,role,args[0]);
     }
     else if (strcmp(command, "--update_threshold") == 0) {
-        update_threshold(args[0],user,role,args[1]);
+        update_threshold(district,user,role,args[0]);
     }
     else if (strcmp(command, "--filter") == 0) {
-        printf("Filter command\n");
+        filter(district,user,role,args);
     }
     else {
         printf("Unknown command\n");
     }
 
-   
+
     return 0;
 
 }
