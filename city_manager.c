@@ -1,11 +1,13 @@
 #include <time.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <dirent.h> //for checking symlinks in the root dir
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <stdlib.h> //for exit()
 
 typedef struct Report{
     int reportID;
@@ -698,9 +700,54 @@ void filter(char *district_id, char* name, char *role, char** filters){
 }
 
 /// --------------
-/// SYMLINKS -> not sure if needed
+/// DELETE DISTRICT
 /// --------------
 
+void remove_district(char *district_id, char* name, char *role){
+    struct stat st;
+    char Sympath[256];
+
+    if ((strcmp(district_id, "up") != 0)){
+        printf("for now only allowing on UP directories.\n");
+        return;
+    }
+    if (strcmp(role, "manager") != 0) {
+        printf("Manager role required to delete directory.\n");
+        return;
+    }
+
+    if (stat(district_id, &st) == -1) {
+        perror("[ERROR] accessing district direcotory");
+        return;
+    }
+
+    // make a check permissions maybe
+
+    pid_t pid= fork();
+    if(pid <0 ){
+        perror("[ERROR] fork failed");
+    }
+    if(pid==0){
+        execlp("rm","rm","-rf",district_id,NULL);
+
+        perror("[ERROR] deleting district");
+        exit(0);
+    }
+    // wait for the district to be removed then symlink remove
+    int status;
+    waitpid(pid,&status,0);
+
+
+    snprintf(Sympath, sizeof(Sympath), "active_reports-%s", district_id);
+
+    printf("\nEND OF DELETE\n");
+
+}
+
+/// --------------
+/// SYMLINKS -> not sure if needed
+/// --------------
+/// WILL DELETE this and re-edit add to check for danglink in add
 void check_links() {
     struct dirent *entry;
     struct stat link_stat, target_stat;
@@ -775,6 +822,9 @@ int main(int argc, char* argv[]){
     }
     else if (strcmp(command, "--filter") == 0) {
         filter(district,user,role,args);
+    }
+    else if (strcmp(command, "--remove_district") == 0) {
+        remove_district(district,user,role);
     }
     else {
         printf("Unknown command\n");
