@@ -486,7 +486,7 @@ void remove_report(char *district_id, char* name, char *role, char* report_id_ch
         return;
     }
 
-printf("GOT HERE\n");
+//printf("GOT HERE\n");
 
     // Shift
     for (int i = report_id - 1; i < total_records - 1; i++) {
@@ -707,10 +707,6 @@ void remove_district(char *district_id, char* name, char *role){
     struct stat st;
     char Sympath[256];
 
-    if ((strcmp(district_id, "up") != 0)){
-        printf("for now only allowing on UP directories.\n");
-        return;
-    }
     if (strcmp(role, "manager") != 0) {
         printf("Manager role required to delete directory.\n");
         return;
@@ -726,6 +722,7 @@ void remove_district(char *district_id, char* name, char *role){
     pid_t pid= fork();
     if(pid <0 ){
         perror("[ERROR] fork failed");
+        return;
     }
     if(pid==0){
         execlp("rm","rm","-rf",district_id,NULL);
@@ -737,8 +734,12 @@ void remove_district(char *district_id, char* name, char *role){
     int status;
     waitpid(pid,&status,0);
 
-
-    snprintf(Sympath, sizeof(Sympath), "active_reports-%s", district_id);
+    if (status == 0) {
+        snprintf(Sympath, sizeof(Sympath), "active_reports-%s", district_id);
+        unlink(Sympath);
+    } else {
+        printf("Child process failed or was interrupted");
+    }
 
     printf("\nEND OF DELETE\n");
 
