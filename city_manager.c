@@ -136,12 +136,12 @@ void add(char *district_id, char *name, char *role){
         if (strcmp(role, "manager") == 0) {
             //if write or execute, owner
             if (!(st.st_mode & S_IRUSR) || !(st.st_mode & S_IWUSR) || !(st.st_mode & S_IXUSR)) {
-                printf("[ERROR] Manager cannot use district directory\n");
+                perror("[ERROR] Manager cannot use district directory\n");
                 return;
             }
         } else {
             if (!(st.st_mode & S_IRGRP) || !(st.st_mode & S_IXGRP)) {
-                printf("[ERROR] Inspector cannot use district directory\n");
+                perror("[ERROR] Inspector cannot use district directory\n");
                 return;
             }
         }
@@ -150,7 +150,7 @@ void add(char *district_id, char *name, char *role){
     else {
         // Dir does not exists -> create
         if (strcmp(role, "manager") != 0) {
-            printf("[ERROR] Only managers can create new districts.\n");
+            perror("[ERROR] Only managers can create new districts.\n");
             return;
         }
         // creates dir
@@ -741,7 +741,7 @@ void remove_district(char *district_id, char* name, char *role){
         printf("Child process failed or was interrupted");
     }
 
-    printf("\nEND OF DELETE\n");
+    printf("District removed.\n");
 
 }
 
@@ -769,8 +769,7 @@ void check_links() {
                 
                 // stat() follows the link, if it fails the link is dangling.
                 if (stat(entry->d_name, &target_stat) == -1) {
-                    perror("[ERROR] Dangling link detected\n");
-                    unlink(entry->d_name);
+                    perror("[WARNING] Dangling link detected\n");
                 } 
             }
         }
@@ -826,6 +825,7 @@ int main(int argc, char* argv[]){
     }
     else if (strcmp(command, "--remove_district") == 0) {
         remove_district(district,user,role);
+        check_links();
     }
     else {
         printf("Unknown command\n");
