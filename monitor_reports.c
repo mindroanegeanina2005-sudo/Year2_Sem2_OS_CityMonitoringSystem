@@ -13,7 +13,7 @@
 
 void handler(int sig) {
     if (sig == SIGINT) {
-        write(STDOUT_FILENO,"Received signal SIGINT.\n",17);
+        write(STDOUT_FILENO,"Received signal SIGINT.\n",30);
         unlink(".monitor_pid");
         exit(0);
     }
