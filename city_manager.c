@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include <time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -276,15 +277,45 @@ void add(char *district_id, char *name, char *role){
     if (stat(conf, &st) == 0) {
         if (strcmp(role, "manager") == 0) {
             if (!(st.st_mode & S_IRUSR) || !(st.st_mode & S_IWUSR)) {
-                printf("[ERROR] Manager cannot read and write district.cfg\n");
+                perror("[ERROR] Manager cannot read and write district.cfg\n");
                 return;
             }
         } else {
             if (!(st.st_mode & S_IRGRP)) {
-                printf("[ERROR] Inspector cannot read district.cfg\n");
+                perror("[ERROR] Inspector cannot read district.cfg\n");
                 return;
             }
         }
+    }
+
+
+    // PHASE 2, MONITOR SIGNAL
+    int mr_notified =0;
+     int pid_fd = open(".monitor_pid", O_RDONLY);
+    if (fd == -1) {
+        perror("[ERROR] open hidden file");
+        return;
+    }
+
+    char pid_buffer[50];
+    int pid_read=read(pid_fd,pid_buffer,sizeof(pid_buffer)-1); //returns how much was read
+
+    if(pid_read>0){
+        pid_buffer[pid_read]='/0';
+        int monitor_pid=atoi(pid_buffer);
+
+        //pid == 0, the signal shall be sent to all 
+        //the process in the same process group as the calling process;
+        if(kill(monitor_pid,SIGUSR1)==0){
+            mr_notified=1;
+        }
+    }
+    close(pid_fd);
+
+    if(mr_notified ==1){
+        write_log(district_id, name, role, "Monitor informed of the event.");
+    }else{
+        write_log(district_id, name, role, "[ERROR] monitor could NOT be informed of the event.");
     }
 }
 
@@ -457,7 +488,7 @@ void remove_report(char *district_id, char* name, char *role, char* report_id_ch
     }
 
     if (!(st.st_mode & S_IRUSR) || !(st.st_mode & S_IWUSR)) {
-        printf("[ERROR]Manager does not have read/write permissions on");
+        printf("[ERROR] Manager does not have read/write permissions on");
         return;
     }
 

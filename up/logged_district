@@ -1,3 +1,16 @@
 Mon May  4 17:55:19 2026 alice manager add
 Mon May  4 17:55:25 2026 alice manager add
 Mon May  4 17:58:33 2026 alice manager list
+Tue May  5 08:27:42 2026 alice manager add
+Tue May  5 08:27:48 2026 alice manager list
+Tue May  5 08:51:22 2026 alice manager add
+Tue May  5 08:51:22 2026 alice manager [ERROR] monitor could NOT be informed of the event.
+Tue May  5 08:55:42 2026 alice manager add
+Tue May  5 08:55:42 2026 alice manager Monitor informed of the event.
+Tue May  5 09:00:43 2026 alice manager add
+Tue May  5 09:00:43 2026 alice manager Monitor informed of the event.
+Tue May  5 09:01:45 2026 alice manager update threshold
+Tue May  5 09:01:49 2026 alice manager update threshold
+Tue May  5 09:03:10 2026 alice manager list
+Tue May  5 09:03:21 2026 alice manager add
+Tue May  5 09:03:21 2026 alice manager Monitor informed of the event.

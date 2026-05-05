@@ -8,16 +8,17 @@
 #include <stdlib.h> //for exit()
 
 // SIGINT = Interrupt - Interrupt from keyboard (CTRL+C).
+//kill -INT $(cat .monitor_pid)   -sends SIGINT if running in the backround
 
 
 void handler(int sig) {
     if (sig == SIGINT) {
-        write(STDOUT_FILENO,"Received signal\n",17);
+        write(STDOUT_FILENO,"Received signal SIGINT.\n",17);
         unlink(".monitor_pid");
         exit(0);
     }
     else if (sig == SIGUSR1){
-        char msg[50]= "Report added\n";
+        char msg[50]= "\nReport added.\n";
         write(STDOUT_FILENO, msg, strlen(msg));
     }
     
